@@ -659,6 +659,51 @@
     let benchmarkPollTimer = null;
     let testPollTimer = null;
     let knownTestStates = new Map();
+    const testLabelMap = {
+      test_set_and_get: "기본 저장/조회",
+      test_overwrite: "동일 키 덮어쓰기",
+      test_get_nonexistent: "없는 키 조회",
+      test_delete_existing: "존재하는 키 삭제",
+      test_delete_nonexistent: "없는 키 삭제",
+      test_exists: "키 존재 여부 확인",
+      test_keys: "전체 키 목록 조회",
+      test_size: "항목 수 카운트",
+      test_hash_stays_inside_bucket_range: "해시 인덱스 범위 확인",
+      test_collision: "해시 충돌 chaining 처리",
+      test_resize: "리사이즈 후 데이터 보존",
+      test_empty_string_key_and_value: "빈 문자열 키/값 처리",
+      test_very_long_string_key: "아주 긴 키 처리",
+      test_special_character_key: "특수문자와 한글 키 처리",
+      test_bulk_insert_over_thousand_items: "대량 삽입 1500건 유지",
+      test_reinsert_after_delete: "삭제 후 같은 키 재삽입",
+      test_delete_one_item_keeps_other_colliding_items: "충돌 버킷 일부 삭제",
+      test_keys_become_empty_after_all_deletes: "전체 삭제 후 키 목록 비움",
+      test_resize_preserves_overwritten_value: "리사이즈 후 덮어쓴 값 유지",
+      test_invalid_initial_capacity_raises_value_error: "잘못된 초기 capacity 거부",
+      test_invalid_load_factor_raises_value_error: "잘못된 load factor 거부",
+      test_delete: "삭제 후 재조회 확인",
+      test_ttl_expiry: "TTL 만료 처리",
+      test_ttl_remaining: "남은 TTL 계산",
+      test_ttl_no_expiry: "TTL 없는 키 처리",
+      test_ttl_nonexistent: "없는 키 TTL은 -1",
+      test_zero_ttl_expires_immediately: "ttl=0 즉시 만료",
+      test_negative_ttl_behaves_like_expired_key: "음수 TTL 처리",
+      test_overwrite_without_ttl_clears_previous_expiry: "TTL 제거 덮어쓰기",
+      test_periodic_cleanup: "백그라운드 만료 정리",
+      test_concurrent_writes: "멀티스레드 동시 쓰기",
+      test_concurrent_read_write: "동시 읽기/쓰기",
+      test_flush: "전체 데이터 비우기",
+      test_flush_clears_expiry_bookkeeping: "flush 후 TTL 장부 비우기",
+      test_info: "저장소 상태 요약",
+      test_invalidate: "즉시 무효화 처리",
+      test_shutdown_stops_cleanup_thread: "종료 시 청소 스레드 정리",
+      test_set_empty_key: "빈 키 요청 400",
+      test_set_with_ttl: "TTL 포함 저장 API",
+      test_run_tests: "테스트 실행 API",
+      test_dashboard: "대시보드 HTML 서빙",
+      test_run_benchmark: "벤치마크 API 응답 구조",
+      test_ttl_expiry_returns_404: "TTL 만료 후 404",
+    };
 
     // 시나리오 버튼들의 강조 상태를 한 번에 정리한다.
     function setScenarioButtonState(activeScenario = "") {
@@ -879,6 +924,27 @@
       return states;
     }
 
+    // pytest 식별자를 대시보드용 한글 라벨로 바꾼다.
+    function formatTestDisplayName(testId) {
+      const parts = String(testId).split("::");
+      const functionName = parts[parts.length - 1] || "";
+      const className = parts.length > 1 ? parts[parts.length - 2] : "";
+      const label = testLabelMap[functionName];
+
+      if (label) {
+        if (className === "TestHashTable") return `해시테이블 · ${label}`;
+        if (className === "TestMiniRedis") return `저장소 · ${label}`;
+        if (className === "TestAPI") return `API · ${label}`;
+        return label;
+      }
+
+      return functionName
+        .replace(/^test_/, "")
+        .split("_")
+        .filter(Boolean)
+        .join(" ");
+    }
+
     // 테스트 진행 요약 카드와 목록을 화면에 그린다.
     function renderTestBoard(states, runStatus = "idle") {
       knownTestStates = states;
@@ -906,7 +972,7 @@
         return `
           <div class="test-item">
             <span class="status-pill ${lowerStatus}">${status}</span>
-            <div class="test-name">${escapeHtml(name)}</div>
+            <div class="test-name">${escapeHtml(formatTestDisplayName(name))}</div>
           </div>
         `;
       }).join("");
