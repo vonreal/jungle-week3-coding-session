@@ -23,15 +23,11 @@
   <text x="485" y="140" text-anchor="middle" font-size="11" fill="#185FA5">threading.RLock</text>
   <text x="485" y="156" text-anchor="middle" font-size="11" fill="#185FA5">원자적 읽기/쓰기 보장</text>
 
-  <line x1="330" y1="132" x2="358" y2="132" stroke="#888780" stroke-width="1.5" marker-end="url(#arr)"/>
-
   <!-- TTL Manager -->
   <rect x="70" y="196" width="540" height="76" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
   <text x="340" y="224" text-anchor="middle" font-size="13" font-weight="500" fill="#633806">TTL 만료 관리자</text>
   <text x="340" y="242" text-anchor="middle" font-size="11" fill="#854F0B">lazy expiry — 접근 시 만료 체크 (유통기한 확인)</text>
   <text x="340" y="258" text-anchor="middle" font-size="11" fill="#854F0B">periodic cleanup — 백그라운드 스레드가 1초마다 만료 키 정리</text>
-
-  <line x1="200" y1="172" x2="200" y2="194" stroke="#888780" stroke-width="1.5" marker-end="url(#arr)"/>
 
   <!-- FastAPI -->
   <rect x="40" y="336" width="600" height="56" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="0.5"/>
