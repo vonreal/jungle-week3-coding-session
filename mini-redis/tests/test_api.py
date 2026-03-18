@@ -216,9 +216,14 @@ class TestAPI:
         assert res.status_code == 200
         data = res.json()
 
-        assert "without_cache" in data
-        assert "with_cache" in data
-        assert "speedup" in data
+        assert "scenario_1_repeated_reads" in data
+        assert "scenario_2_unique_reads" in data
+        assert "scenario_3_short_ttl" in data
+
+        repeated_reads = data["scenario_1_repeated_reads"]
+        assert "db_only" in repeated_reads
+        assert "with_cache" in repeated_reads
+        assert "speedup" in repeated_reads
 
     def test_ttl_expiry_returns_404(self):
         """

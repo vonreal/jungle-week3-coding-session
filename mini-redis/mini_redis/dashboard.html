@@ -550,28 +550,52 @@
         .replaceAll("'", "&#039;");
     }
 
-    // Run Benchmark 결과를 막대 그래프로 간단히 보여준다.
-    function renderBenchmark(result) {
-      const withoutCache = result.without_cache?.total_ms ?? 0;
-      const withCache = result.with_cache?.total_ms ?? 0;
-      const maxValue = Math.max(withoutCache, withCache, 1);
+    // 긴 시나리오 제목을 카드 제목으로 쓰기 좋게 줄인다.
+    function scenarioLabel(name) {
+      if (name === "scenario_1_repeated_reads") return "Scenario 1";
+      if (name === "scenario_2_unique_reads") return "Scenario 2";
+      if (name === "scenario_3_short_ttl") return "Scenario 3";
+      return name;
+    }
 
-      benchmarkChart.innerHTML = `
-        <div class="bench-row">
-          <strong>No Cache</strong>
-          <div class="bench-bar">
-            <div class="bench-fill" style="width: ${(withoutCache / maxValue) * 100}%"></div>
+    // Run Benchmark 결과를 시나리오별 비교 카드로 보여준다.
+    function renderBenchmark(result) {
+      const scenarioEntries = Object.entries(result);
+
+      benchmarkChart.innerHTML = scenarioEntries.map(([name, data]) => {
+        const dbOnly = data.db_only?.total_ms ?? 0;
+        const withCache = data.with_cache?.total_ms ?? 0;
+        const maxValue = Math.max(dbOnly, withCache, 1);
+        const hits = data.with_cache?.cache_hits ?? 0;
+        const misses = data.with_cache?.cache_misses ?? 0;
+        const total = hits + misses;
+        const hitRate = total === 0 ? 0 : Math.round((hits / total) * 100);
+
+        return `
+          <div class="info-card" style="padding: 16px;">
+            <span>${scenarioLabel(name)}</span>
+            <strong style="font-size: 1.1rem; display: block; margin-bottom: 6px;">${escapeHtml(data.title || name)}</strong>
+            <div class="status-line" style="margin-bottom: 14px;">속도 향상: 약 ${Number(data.speedup ?? 0).toFixed(2)}배 | 캐시 히트율: ${hitRate}%</div>
+            <div class="bench-row">
+              <strong>SQLite</strong>
+              <div class="bench-bar">
+                <div class="bench-fill" style="width: ${(dbOnly / maxValue) * 100}%"></div>
+              </div>
+              <span>${dbOnly.toFixed(1)} ms</span>
+            </div>
+            <div class="bench-row">
+              <strong>Mini Redis</strong>
+              <div class="bench-bar">
+                <div class="bench-fill cool" style="width: ${(withCache / maxValue) * 100}%"></div>
+              </div>
+              <span>${withCache.toFixed(1)} ms</span>
+            </div>
+            <div class="status-line" style="margin-top: 10px;">
+              hits: ${hits} / misses: ${misses}
+            </div>
           </div>
-          <span>${withoutCache.toFixed(1)} ms</span>
-        </div>
-        <div class="bench-row">
-          <strong>With Cache</strong>
-          <div class="bench-bar">
-            <div class="bench-fill cool" style="width: ${(withCache / maxValue) * 100}%"></div>
-          </div>
-          <span>${withCache.toFixed(1)} ms</span>
-        </div>
-      `;
+        `;
+      }).join("");
     }
 
     // SET 버튼은 key/value/ttl을 서버에 보내 저장한다.
@@ -653,7 +677,7 @@
       try {
         const result = await requestJson("/run-benchmark", { method: "POST" });
         renderBenchmark(result);
-        showBox(labResult, `속도 향상: 약 ${result.speedup.toFixed(2)}배`, "good");
+        showBox(labResult, "3개 시나리오 벤치마크를 갱신했습니다.", "good");
       } catch (error) {
         showBox(labResult, error.message, "bad");
       } finally {

@@ -24,6 +24,7 @@ htmlcov/
 .env
 .env.*
 *.log
+benchmark_data.db
 
 # OS and editor files
 .DS_Store
