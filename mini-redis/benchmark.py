@@ -115,7 +115,7 @@ def _timing_result(total_ms: float, ops: int) -> dict[str, float | int]:
     }
 
 
-def _build_mixed_access_pattern(iterations: int) -> list[int]:
+def build_query_list(iterations: int = 1000) -> list[int]:
     """
     인기 상품과 일반 상품이 섞인 조회 목록을 미리 만든다.
 
@@ -143,7 +143,7 @@ def run_scenario_1(store: MiniRedis, iterations: int = 1000) -> dict:
     같은 데이터가 반복 조회될 때 캐시가 얼마나 강한지 보여준다.
     """
     store.flush()
-    query_ids = _build_mixed_access_pattern(iterations)
+    query_ids = build_query_list(iterations)
 
     # 기준선은 "캐시 없이 매번 DB에서 읽는 시간"이다.
     db_only_start = time.perf_counter()
@@ -226,18 +226,18 @@ def run_scenario_2(store: MiniRedis, iterations: int = 100) -> dict:
 
 def run_scenario_3(store: MiniRedis, iterations: int = 200) -> dict:
     """
-    시나리오 3: 같은 상품을 읽지만 TTL이 매우 짧은 경우를 측정한다.
+    시나리오 3: 혼합 조회 패턴이지만 TTL이 매우 짧은 경우를 측정한다.
 
-    이 상황은 자주 바뀌는 랭킹 데이터처럼
-    캐시가 도움이 되지만 오래 유지되지는 못하는 장면에 가깝다.
+    시나리오 1과 같은 조회 패턴을 쓰되 TTL만 1초로 줄이면,
+    "같은 요청 구조라도 TTL이 짧으면 캐시 효과가 줄어든다"를
+    더 직접적으로 비교할 수 있다.
     """
     store.flush()
-    product_id = 42
-    cache_key = f"product:{product_id}"
+    query_ids = build_query_list(iterations)
 
     # 비교를 공정하게 하려고 DB 쪽도 같은 요청 간격으로 측정한다.
     db_only_start = time.perf_counter()
-    for _ in range(iterations):
+    for product_id in query_ids:
         time.sleep(0.05)
         query_from_db(product_id)
     db_only_total_ms = (time.perf_counter() - db_only_start) * 1000
@@ -247,9 +247,10 @@ def run_scenario_3(store: MiniRedis, iterations: int = 200) -> dict:
 
     # TTL=1초로 두면 반복 조회 중간에 캐시가 여러 번 만료된다.
     with_cache_start = time.perf_counter()
-    for _ in range(iterations):
+    for product_id in query_ids:
         # 요청 자체가 띄엄띄엄 들어오는 상황을 흉내 낸다.
         time.sleep(0.05)
+        cache_key = f"product:{product_id}"
         cached_value = store.get(cache_key)
         if cached_value is None:
             cache_misses += 1
