@@ -644,6 +644,14 @@
             <div class="status-line" style="margin-top: 10px;">
               hits: ${hits} / misses: ${misses}
             </div>
+            <div class="status-line" style="margin-top: 6px;">
+              active: ${Number(data.with_cache?.active_ms ?? 0).toFixed(1)} ms / wait: ${Number(data.with_cache?.wait_ms ?? 0).toFixed(1)} ms
+            </div>
+            <div class="status-line" style="margin-top: 6px;">
+              ${name === "scenario_3_short_ttl"
+                ? "이 시나리오는 총 시간보다 active_ms와 miss 증가를 같이 보는 편이 더 정확합니다."
+                : "총 시간과 active_ms가 거의 같아서 순수 조회 비용 비교에 가깝습니다."}
+            </div>
           </div>
         `;
       }).join("");
