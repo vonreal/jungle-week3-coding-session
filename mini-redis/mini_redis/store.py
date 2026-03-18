@@ -1,5 +1,7 @@
 import threading
 import time
+import math
+
 from mini_redis.hashtable import HashTable
 
 
@@ -105,20 +107,63 @@ class MiniRedis:
             return self._data.keys()
 
     def ttl(self, key: str) -> int | None:
-        """남은 TTL(초). 만료 없으면 None, 키 없으면 -1"""
-        raise NotImplementedError
+        """
+        키의 남은 TTL을 알려주는 함수.
+
+        만료 시간이 없는 물건은 None,
+        아예 없는 물건은 -1을 돌려준다.
+        TTL이 있으면 남은 시간을 올림해서 정수 초로 보여 준다.
+        """
+        with self._lock:
+            if self._purge_if_expired(key):
+                return -1
+            if not self._data.exists(key):
+                return -1
+            if key not in self._expiry:
+                return None
+            # 아주 조금 남았어도 0초로 보이지 않게 올림을 쓴다.
+            remaining = self._expiry[key] - time.time()
+            return max(0, math.ceil(remaining))
 
     def invalidate(self, key: str) -> bool:
-        """키를 즉시 무효화 (삭제와 동일하지만 의미적 구분)"""
-        raise NotImplementedError
+        """
+        키를 즉시 무효로 만드는 함수.
+
+        동작은 delete와 같지만,
+        읽는 사람에게 '강제로 만료시켰다'는 뜻을 더 분명히 보여 준다.
+        """
+        with self._lock:
+            return self.delete(key)
 
     def flush(self) -> None:
-        """모든 데이터 삭제"""
-        raise NotImplementedError
+        """
+        저장소를 통째로 비우는 함수.
+
+        창고 대청소처럼 모든 키와 TTL 정보를 함께 비워야
+        상태가 깔끔하게 초기화된다.
+        """
+        with self._lock:
+            # 키 목록을 먼저 복사해서 돌면 삭제 중 목록이 흔들려도 안전하다.
+            for key in list(self._data.keys()):
+                self._data.delete(key)
+            self._expiry.clear()
 
     def info(self) -> dict:
-        """저장소 상태 정보 (총 키 수, 만료 대기 수 등)"""
-        raise NotImplementedError
+        """
+        저장소의 현재 상태를 요약해 주는 함수.
+
+        오래된 키를 먼저 치운 뒤 숫자를 세야
+        창고 재고표가 실제 상태와 맞아 떨어진다.
+        """
+        with self._lock:
+            self._purge_all_expired()
+            total_keys = self._data.size()
+            keys_with_ttl = len(self._expiry)
+            return {
+                "total_keys": total_keys,
+                "keys_with_ttl": keys_with_ttl,
+                "keys_without_ttl": total_keys - keys_with_ttl,
+            }
 
     def _is_expired(self, key: str) -> bool:
         """
