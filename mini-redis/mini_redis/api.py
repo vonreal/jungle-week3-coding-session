@@ -15,6 +15,8 @@ app = FastAPI(title="Mini Redis", version="0.1.0")
 store = MiniRedis()
 benchmark_jobs: dict[str, dict] = {}
 benchmark_jobs_lock = threading.Lock()
+test_jobs: dict[str, dict] = {}
+test_jobs_lock = threading.Lock()
 
 
 class SetRequest(BaseModel):
@@ -59,6 +61,13 @@ class BenchmarkStartResponse(BaseModel):
 
     job_id: str
     scenario: str
+    status: str
+
+
+class TestStartResponse(BaseModel):
+    """백그라운드 테스트 실행 시작 응답 형식."""
+
+    job_id: str
     status: str
 
 
@@ -218,6 +227,125 @@ def run_tests():
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to run tests: {exc}") from exc
+
+
+@app.post("/run-tests/start", response_model=TestStartResponse)
+def start_tests():
+    """
+    pytest를 백그라운드에서 시작하고 작업 ID를 돌려주는 API.
+
+    왜 필요한가? 대시보드에서 CLI처럼 출력이 조금씩 쌓이는 모습을 보여주려면
+    요청 하나가 끝날 때까지 기다리지 말고, 작업을 먼저 시작한 뒤 상태를 따로 읽어야 한다.
+    """
+    project_root = Path(__file__).resolve().parent.parent
+    env = os.environ.copy()
+    env["MINI_REDIS_SKIP_NESTED_RUN_TESTS"] = "1"
+    env["PYTHONUNBUFFERED"] = "1"
+
+    job_id = uuid.uuid4().hex
+    with test_jobs_lock:
+        test_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "running",
+            "output": "",
+            "errors": "",
+            "passed": None,
+            "returncode": None,
+        }
+
+    def worker() -> None:
+        process = None
+        try:
+            # 줄 단위로 읽으려면 stdout/stderr를 pipe로 열고 text 모드를 쓴다.
+            process = subprocess.Popen(
+                [sys.executable, "-m", "pytest", "--tb=short", "-v"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=project_root,
+                env=env,
+                bufsize=1,
+            )
+
+            stdout_chunks: list[str] = []
+            stderr_chunks: list[str] = []
+
+            def read_stream(stream, target_chunks, field_name: str) -> None:
+                # pytest가 흘려보내는 줄을 하나씩 모아 대시보드가 바로 읽을 수 있게 한다.
+                for line in iter(stream.readline, ""):
+                    target_chunks.append(line)
+                    with test_jobs_lock:
+                        if job_id in test_jobs:
+                            test_jobs[job_id][field_name] = "".join(target_chunks)
+                stream.close()
+
+            stdout_thread = threading.Thread(
+                target=read_stream,
+                args=(process.stdout, stdout_chunks, "output"),
+                daemon=True,
+            )
+            stderr_thread = threading.Thread(
+                target=read_stream,
+                args=(process.stderr, stderr_chunks, "errors"),
+                daemon=True,
+            )
+            stdout_thread.start()
+            stderr_thread.start()
+
+            process.wait(timeout=60)
+            stdout_thread.join()
+            stderr_thread.join()
+
+            with test_jobs_lock:
+                test_jobs[job_id].update(
+                    {
+                        "status": "completed",
+                        "passed": process.returncode == 0,
+                        "returncode": process.returncode,
+                        "output": "".join(stdout_chunks),
+                        "errors": "".join(stderr_chunks),
+                    }
+                )
+        except subprocess.TimeoutExpired:
+            if process is not None:
+                process.kill()
+            with test_jobs_lock:
+                test_jobs[job_id].update(
+                    {
+                        "status": "failed",
+                        "passed": False,
+                        "returncode": -1,
+                        "errors": "Pytest timed out after 60 seconds",
+                    }
+                )
+        except Exception as exc:
+            with test_jobs_lock:
+                test_jobs[job_id].update(
+                    {
+                        "status": "failed",
+                        "passed": False,
+                        "returncode": -1,
+                        "errors": str(exc),
+                    }
+                )
+
+    threading.Thread(target=worker, daemon=True).start()
+    return TestStartResponse(job_id=job_id, status="running")
+
+
+@app.get("/run-tests/status/{job_id}")
+def get_test_status(job_id: str):
+    """
+    백그라운드 테스트 작업의 현재 상태를 조회하는 API.
+
+    왜 필요한가? 대시보드가 "지금 어디까지 출력됐는지"를
+    일정 간격으로 읽어와서 화면에 이어 붙일 수 있어야 하기 때문이다.
+    """
+    with test_jobs_lock:
+        job = test_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Test job not found")
+        return job
 
 
 @app.post("/run-benchmark")
