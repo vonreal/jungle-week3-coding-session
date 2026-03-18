@@ -207,6 +207,11 @@
       box-shadow: 0 10px 24px rgba(63, 80, 107, 0.18);
     }
 
+    button.is-running {
+      background: linear-gradient(135deg, #2d7d5f, #1d5e45);
+      box-shadow: 0 10px 24px rgba(45, 125, 95, 0.24);
+    }
+
     .result-box,
     pre {
       margin: 0;
@@ -435,7 +440,7 @@
             <button id="benchmarkButton" type="button" class="secondary">Run Benchmark</button>
           </div>
           <div class="bench-controls">
-            <button id="scenario1Button" type="button">Scenario 1</button>
+            <button id="scenario1Button" type="button" class="secondary">Scenario 1</button>
             <button id="scenario2Button" type="button" class="secondary">Scenario 2</button>
             <button id="scenario3Button" type="button" class="secondary">Scenario 3</button>
             <button id="clearBenchmarkButton" type="button" class="secondary">Clear</button>
@@ -485,6 +490,19 @@
 
     let keyRows = [];
     let benchmarkPollTimer = null;
+
+    // 시나리오 버튼들의 강조 상태를 한 번에 정리한다.
+    function setScenarioButtonState(activeScenario = "") {
+      const mappings = [
+        ["scenario_1_repeated_reads", scenario1Button],
+        ["scenario_2_unique_reads", scenario2Button],
+        ["scenario_3_short_ttl", scenario3Button],
+      ];
+
+      mappings.forEach(([name, button]) => {
+        button.classList.toggle("is-running", name === activeScenario);
+      });
+    }
 
     // 서버 응답을 읽기 쉬운 메시지 상자로 보여준다.
     function showBox(target, message, type = "good") {
@@ -687,6 +705,7 @@
       scenario1Button.disabled = true;
       scenario2Button.disabled = true;
       scenario3Button.disabled = true;
+      setScenarioButtonState(scenarioName);
       benchmarkProgressFill.style.width = "0%";
       benchmarkProgressText.textContent = "작업 생성 중...";
       showBox(labResult, `${scenarioLabel(scenarioName)} 실행을 시작합니다...`, "good");
@@ -707,6 +726,7 @@
               scenario1Button.disabled = false;
               scenario2Button.disabled = false;
               scenario3Button.disabled = false;
+              setScenarioButtonState();
             } else if (status.status === "failed") {
               clearInterval(benchmarkPollTimer);
               benchmarkPollTimer = null;
@@ -714,6 +734,7 @@
               scenario1Button.disabled = false;
               scenario2Button.disabled = false;
               scenario3Button.disabled = false;
+              setScenarioButtonState();
             }
           } catch (error) {
             clearInterval(benchmarkPollTimer);
@@ -722,6 +743,7 @@
             scenario1Button.disabled = false;
             scenario2Button.disabled = false;
             scenario3Button.disabled = false;
+            setScenarioButtonState();
           }
         }, 300);
       } catch (error) {
@@ -729,6 +751,7 @@
         scenario1Button.disabled = false;
         scenario2Button.disabled = false;
         scenario3Button.disabled = false;
+        setScenarioButtonState();
       }
     }
 
@@ -831,6 +854,7 @@
       scenario1Button.disabled = false;
       scenario2Button.disabled = false;
       scenario3Button.disabled = false;
+      setScenarioButtonState();
       showBox(labResult, "벤치마크 표시를 초기화했습니다.", "good");
     }
 
