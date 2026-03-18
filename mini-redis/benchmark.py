@@ -9,6 +9,7 @@ SQLite(디스크)와 Mini Redis(메모리) 조회 속도를 비교하는 벤치�
 
 import json
 import os
+import random
 import sqlite3
 import time
 
@@ -18,7 +19,7 @@ from mini_redis.store import MiniRedis
 DB_PATH = "benchmark_data.db"
 
 
-def setup_database(num_products: int = 1000) -> None:
+def setup_database(num_products: int = 10000) -> None:
     """
     벤치마크용 SQLite DB를 만들고 더미 상품 데이터를 넣는다.
 
@@ -114,7 +115,27 @@ def _timing_result(total_ms: float, ops: int) -> dict[str, float | int]:
     }
 
 
-def run_scenario_1(store: MiniRedis, iterations: int = 100) -> dict:
+def _build_mixed_access_pattern(iterations: int) -> list[int]:
+    """
+    인기 상품과 일반 상품이 섞인 조회 목록을 미리 만든다.
+
+    왜 미리 만드는가? DB만 쓸 때와 캐시를 쓸 때
+    완전히 같은 요청 순서를 써야 비교가 공정하기 때문이다.
+    """
+    popular_products = list(range(1, 11))
+    query_ids: list[int] = []
+
+    for _ in range(iterations):
+        # 70%는 인기 상품, 30%는 전체 상품 중 임의 선택으로 섞는다.
+        if random.random() < 0.7:
+            query_ids.append(random.choice(popular_products))
+        else:
+            query_ids.append(random.randint(1, 10000))
+
+    return query_ids
+
+
+def run_scenario_1(store: MiniRedis, iterations: int = 1000) -> dict:
     """
     시나리오 1: 같은 상품을 계속 읽는 경우를 측정한다.
 
@@ -122,12 +143,11 @@ def run_scenario_1(store: MiniRedis, iterations: int = 100) -> dict:
     같은 데이터가 반복 조회될 때 캐시가 얼마나 강한지 보여준다.
     """
     store.flush()
-    product_id = 42
-    cache_key = f"product:{product_id}"
+    query_ids = _build_mixed_access_pattern(iterations)
 
     # 기준선은 "캐시 없이 매번 DB에서 읽는 시간"이다.
     db_only_start = time.perf_counter()
-    for _ in range(iterations):
+    for product_id in query_ids:
         query_from_db(product_id)
     db_only_total_ms = (time.perf_counter() - db_only_start) * 1000
 
@@ -136,7 +156,8 @@ def run_scenario_1(store: MiniRedis, iterations: int = 100) -> dict:
 
     # 캐시 경로는 첫 요청만 DB를 쓰고, 그 뒤에는 메모리에서 읽는다.
     with_cache_start = time.perf_counter()
-    for _ in range(iterations):
+    for product_id in query_ids:
+        cache_key = f"product:{product_id}"
         cached_value = store.get(cache_key)
         if cached_value is None:
             cache_misses += 1
@@ -167,9 +188,10 @@ def run_scenario_2(store: MiniRedis, iterations: int = 100) -> dict:
     캐시가 적중하지 못하는 장면을 보여준다.
     """
     store.flush()
+    query_ids = list(range(1, iterations + 1))
 
     db_only_start = time.perf_counter()
-    for product_id in range(1, iterations + 1):
+    for product_id in query_ids:
         query_from_db(product_id)
     db_only_total_ms = (time.perf_counter() - db_only_start) * 1000
 
@@ -178,7 +200,7 @@ def run_scenario_2(store: MiniRedis, iterations: int = 100) -> dict:
 
     # 모든 요청이 다르면 캐시는 거의 장부만 쓰고 끝난다.
     with_cache_start = time.perf_counter()
-    for product_id in range(1, iterations + 1):
+    for product_id in query_ids:
         cache_key = f"product:{product_id}"
         cached_value = store.get(cache_key)
         if cached_value is None:
@@ -202,7 +224,7 @@ def run_scenario_2(store: MiniRedis, iterations: int = 100) -> dict:
     }
 
 
-def run_scenario_3(store: MiniRedis, iterations: int = 100) -> dict:
+def run_scenario_3(store: MiniRedis, iterations: int = 200) -> dict:
     """
     시나리오 3: 같은 상품을 읽지만 TTL이 매우 짧은 경우를 측정한다.
 
@@ -250,7 +272,7 @@ def run_scenario_3(store: MiniRedis, iterations: int = 100) -> dict:
     }
 
 
-def run_benchmark(iterations: int = 100) -> dict:
+def run_benchmark() -> dict:
     """
     전체 벤치마크를 한 번에 실행한다.
 
@@ -265,9 +287,9 @@ def run_benchmark(iterations: int = 100) -> dict:
 
     try:
         return {
-            "scenario_1_repeated_reads": run_scenario_1(store, iterations),
-            "scenario_2_unique_reads": run_scenario_2(store, iterations),
-            "scenario_3_short_ttl": run_scenario_3(store, iterations),
+            "scenario_1_repeated_reads": run_scenario_1(store, iterations=1000),
+            "scenario_2_unique_reads": run_scenario_2(store, iterations=1000),
+            "scenario_3_short_ttl": run_scenario_3(store, iterations=200),
         }
     finally:
         # 백그라운드 정리 스레드와 테스트용 DB 파일을 함께 정리한다.
