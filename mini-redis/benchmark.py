@@ -13,50 +13,6 @@ import time
 
 from mini_redis.store import MiniRedis
 
-
-class _BenchmarkFallbackStore:
-    """
-    벤치마크용 임시 캐시 저장소.
-
-    비유: 정식 창고가 없을 때 잠깐 쓰는 메모 상자다.
-    왜 필요한가? B 담당의 MiniRedis가 아직 비어 있어도
-    C 담당은 벤치마크 흐름을 먼저 완성할 수 있어야 하기 때문이다.
-    """
-
-    def __init__(self):
-        """간단한 키-값 저장 상자를 만든다."""
-        self._values: dict[str, str] = {}
-
-    def get(self, key: str) -> str | None:
-        """키가 있으면 값을 돌려주고, 없으면 None을 돌려준다."""
-        return self._values.get(key)
-
-    def set(self, key: str, value: str, ttl: int | None = None) -> None:
-        """
-        값을 저장한다.
-
-        ttl은 실제 MiniRedis와 인터페이스를 맞추기 위해 받지만,
-        벤치마크에서는 만료 기능이 핵심이 아니라서 사용하지 않는다.
-        """
-        self._values[key] = value
-
-    def shutdown(self) -> None:
-        """임시 저장소는 따로 정리할 자원이 없어서 그대로 끝낸다."""
-        return None
-
-
-def _build_store():
-    """
-    진짜 MiniRedis를 만들 수 있으면 쓰고, 아니면 임시 저장소를 쓴다.
-
-    왜 필요한가? A/B 작업이 끝나기 전에도 C 담당이 성능 비교 화면을 만들 수 있어야 하기 때문이다.
-    """
-    try:
-        return MiniRedis()
-    except NotImplementedError:
-        return _BenchmarkFallbackStore()
-
-
 def heavy_computation(n: int) -> str:
     """
     무거운 연산을 흉내 내는 함수.
@@ -72,8 +28,6 @@ def heavy_computation(n: int) -> str:
     for _ in range(limit):
         a, b = b, (a + b) % 1000000007
 
-    # 아주 짧은 sleep도 섞어서 캐시 효과가 더 또렷하게 보이게 한다.
-    time.sleep(0.002)
     return f"fib:{n}:{a}"
 
 
@@ -87,7 +41,7 @@ def run_benchmark(iterations: int = 100) -> dict:
     3. 캐시에 한 번 저장한 뒤 다시 시간을 잰다.
     4. 평균 시간과 속도 향상 배수를 계산한다.
     """
-    store = _build_store()
+    store = MiniRedis()
     input_number = 32
     cache_key = f"benchmark:{input_number}"
 
