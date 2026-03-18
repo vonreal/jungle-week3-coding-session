@@ -12,11 +12,15 @@ import os
 import random
 import sqlite3
 import time
+from collections.abc import Callable
 
 from mini_redis.store import MiniRedis
 
 
 DB_PATH = "benchmark_data.db"
+SCENARIO_1_NAME = "scenario_1_repeated_reads"
+SCENARIO_2_NAME = "scenario_2_unique_reads"
+SCENARIO_3_NAME = "scenario_3_short_ttl"
 
 
 def setup_database(num_products: int = 10000) -> None:
@@ -115,6 +119,35 @@ def _timing_result(total_ms: float, ops: int) -> dict[str, float | int]:
     }
 
 
+def _emit_progress(
+    progress_callback: Callable[[dict], None] | None,
+    scenario_name: str,
+    phase: str,
+    current: int,
+    total: int,
+    started_at: float,
+) -> None:
+    """
+    현재 벤치마크 진행 상황을 바깥으로 알린다.
+
+    왜 필요한가? 대시보드가 "지금 몇 건째 읽고 있는지"와
+    "얼마나 걸렸는지"를 실시간에 가깝게 보여주려면
+    중간 상태를 계속 받아야 하기 때문이다.
+    """
+    if progress_callback is None:
+        return
+
+    progress_callback(
+        {
+            "scenario": scenario_name,
+            "phase": phase,
+            "current_loaded": current,
+            "total_ops": total,
+            "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 3),
+        }
+    )
+
+
 def build_query_list(iterations: int = 1000) -> list[int]:
     """
     인기 상품과 일반 상품이 섞인 조회 목록을 미리 만든다.
@@ -135,7 +168,11 @@ def build_query_list(iterations: int = 1000) -> list[int]:
     return query_ids
 
 
-def run_scenario_1(store: MiniRedis, iterations: int = 1000) -> dict:
+def run_scenario_1(
+    store: MiniRedis,
+    iterations: int = 1000,
+    progress_callback: Callable[[dict], None] | None = None,
+) -> dict:
     """
     시나리오 1: 같은 상품을 계속 읽는 경우를 측정한다.
 
@@ -147,8 +184,17 @@ def run_scenario_1(store: MiniRedis, iterations: int = 1000) -> dict:
 
     # 기준선은 "캐시 없이 매번 DB에서 읽는 시간"이다.
     db_only_start = time.perf_counter()
-    for product_id in query_ids:
+    for index, product_id in enumerate(query_ids, start=1):
         query_from_db(product_id)
+        if index == 1 or index % 25 == 0 or index == iterations:
+            _emit_progress(
+                progress_callback,
+                SCENARIO_1_NAME,
+                "db_only",
+                index,
+                iterations,
+                db_only_start,
+            )
     db_only_total_ms = (time.perf_counter() - db_only_start) * 1000
 
     cache_hits = 0
@@ -156,7 +202,7 @@ def run_scenario_1(store: MiniRedis, iterations: int = 1000) -> dict:
 
     # 캐시 경로는 첫 요청만 DB를 쓰고, 그 뒤에는 메모리에서 읽는다.
     with_cache_start = time.perf_counter()
-    for product_id in query_ids:
+    for index, product_id in enumerate(query_ids, start=1):
         cache_key = f"product:{product_id}"
         cached_value = store.get(cache_key)
         if cached_value is None:
@@ -165,6 +211,15 @@ def run_scenario_1(store: MiniRedis, iterations: int = 1000) -> dict:
             store.set(cache_key, cached_value)
         else:
             cache_hits += 1
+        if index == 1 or index % 25 == 0 or index == iterations:
+            _emit_progress(
+                progress_callback,
+                SCENARIO_1_NAME,
+                "with_cache",
+                index,
+                iterations,
+                with_cache_start,
+            )
     with_cache_total_ms = (time.perf_counter() - with_cache_start) * 1000
 
     safe_with_cache_total_ms = max(with_cache_total_ms, 0.001)
@@ -180,7 +235,11 @@ def run_scenario_1(store: MiniRedis, iterations: int = 1000) -> dict:
     }
 
 
-def run_scenario_2(store: MiniRedis, iterations: int = 100) -> dict:
+def run_scenario_2(
+    store: MiniRedis,
+    iterations: int = 1000,
+    progress_callback: Callable[[dict], None] | None = None,
+) -> dict:
     """
     시나리오 2: 매번 다른 상품을 읽는 경우를 측정한다.
 
@@ -191,8 +250,17 @@ def run_scenario_2(store: MiniRedis, iterations: int = 100) -> dict:
     query_ids = list(range(1, iterations + 1))
 
     db_only_start = time.perf_counter()
-    for product_id in query_ids:
+    for index, product_id in enumerate(query_ids, start=1):
         query_from_db(product_id)
+        if index == 1 or index % 25 == 0 or index == iterations:
+            _emit_progress(
+                progress_callback,
+                SCENARIO_2_NAME,
+                "db_only",
+                index,
+                iterations,
+                db_only_start,
+            )
     db_only_total_ms = (time.perf_counter() - db_only_start) * 1000
 
     cache_hits = 0
@@ -200,7 +268,7 @@ def run_scenario_2(store: MiniRedis, iterations: int = 100) -> dict:
 
     # 모든 요청이 다르면 캐시는 거의 장부만 쓰고 끝난다.
     with_cache_start = time.perf_counter()
-    for product_id in query_ids:
+    for index, product_id in enumerate(query_ids, start=1):
         cache_key = f"product:{product_id}"
         cached_value = store.get(cache_key)
         if cached_value is None:
@@ -209,6 +277,15 @@ def run_scenario_2(store: MiniRedis, iterations: int = 100) -> dict:
             store.set(cache_key, cached_value)
         else:
             cache_hits += 1
+        if index == 1 or index % 25 == 0 or index == iterations:
+            _emit_progress(
+                progress_callback,
+                SCENARIO_2_NAME,
+                "with_cache",
+                index,
+                iterations,
+                with_cache_start,
+            )
     with_cache_total_ms = (time.perf_counter() - with_cache_start) * 1000
 
     safe_with_cache_total_ms = max(with_cache_total_ms, 0.001)
@@ -224,7 +301,11 @@ def run_scenario_2(store: MiniRedis, iterations: int = 100) -> dict:
     }
 
 
-def run_scenario_3(store: MiniRedis, iterations: int = 200) -> dict:
+def run_scenario_3(
+    store: MiniRedis,
+    iterations: int = 200,
+    progress_callback: Callable[[dict], None] | None = None,
+) -> dict:
     """
     시나리오 3: 혼합 조회 패턴이지만 TTL이 매우 짧은 경우를 측정한다.
 
@@ -237,9 +318,18 @@ def run_scenario_3(store: MiniRedis, iterations: int = 200) -> dict:
 
     # 비교를 공정하게 하려고 DB 쪽도 같은 요청 간격으로 측정한다.
     db_only_start = time.perf_counter()
-    for product_id in query_ids:
+    for index, product_id in enumerate(query_ids, start=1):
         time.sleep(0.05)
         query_from_db(product_id)
+        if index == 1 or index % 10 == 0 or index == iterations:
+            _emit_progress(
+                progress_callback,
+                SCENARIO_3_NAME,
+                "db_only",
+                index,
+                iterations,
+                db_only_start,
+            )
     db_only_total_ms = (time.perf_counter() - db_only_start) * 1000
 
     cache_hits = 0
@@ -247,7 +337,7 @@ def run_scenario_3(store: MiniRedis, iterations: int = 200) -> dict:
 
     # TTL=1초로 두면 반복 조회 중간에 캐시가 여러 번 만료된다.
     with_cache_start = time.perf_counter()
-    for product_id in query_ids:
+    for index, product_id in enumerate(query_ids, start=1):
         # 요청 자체가 띄엄띄엄 들어오는 상황을 흉내 낸다.
         time.sleep(0.05)
         cache_key = f"product:{product_id}"
@@ -258,6 +348,15 @@ def run_scenario_3(store: MiniRedis, iterations: int = 200) -> dict:
             store.set(cache_key, cached_value, ttl=1)
         else:
             cache_hits += 1
+        if index == 1 or index % 10 == 0 or index == iterations:
+            _emit_progress(
+                progress_callback,
+                SCENARIO_3_NAME,
+                "with_cache",
+                index,
+                iterations,
+                with_cache_start,
+            )
     with_cache_total_ms = (time.perf_counter() - with_cache_start) * 1000
 
     safe_with_cache_total_ms = max(with_cache_total_ms, 0.001)
@@ -271,6 +370,33 @@ def run_scenario_3(store: MiniRedis, iterations: int = 200) -> dict:
         },
         "speedup": round(db_only_total_ms / safe_with_cache_total_ms, 2),
     }
+
+
+def run_named_scenario(
+    scenario_name: str,
+    progress_callback: Callable[[dict], None] | None = None,
+) -> dict:
+    """
+    시나리오 하나만 골라 실행한다.
+
+    왜 필요한가? 대시보드에서 버튼 하나씩 눌러
+    원하는 시나리오만 따로 돌려 보려는 요구를 지원하기 위해서다.
+    """
+    setup_database()
+    store = MiniRedis()
+
+    try:
+        if scenario_name == SCENARIO_1_NAME:
+            return run_scenario_1(store, iterations=1000, progress_callback=progress_callback)
+        if scenario_name == SCENARIO_2_NAME:
+            return run_scenario_2(store, iterations=1000, progress_callback=progress_callback)
+        if scenario_name == SCENARIO_3_NAME:
+            return run_scenario_3(store, iterations=200, progress_callback=progress_callback)
+        raise ValueError(f"Unknown scenario: {scenario_name}")
+    finally:
+        store.shutdown()
+        if os.path.exists(DB_PATH):
+            os.remove(DB_PATH)
 
 
 def run_benchmark() -> dict:
@@ -288,9 +414,9 @@ def run_benchmark() -> dict:
 
     try:
         return {
-            "scenario_1_repeated_reads": run_scenario_1(store, iterations=1000),
-            "scenario_2_unique_reads": run_scenario_2(store, iterations=1000),
-            "scenario_3_short_ttl": run_scenario_3(store, iterations=200),
+            SCENARIO_1_NAME: run_scenario_1(store, iterations=1000),
+            SCENARIO_2_NAME: run_scenario_2(store, iterations=1000),
+            SCENARIO_3_NAME: run_scenario_3(store, iterations=200),
         }
     finally:
         # 백그라운드 정리 스레드와 테스트용 DB 파일을 함께 정리한다.

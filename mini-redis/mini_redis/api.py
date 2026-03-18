@@ -1,6 +1,8 @@
 import os
 import subprocess
 import sys
+import threading
+import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -11,6 +13,8 @@ from mini_redis.store import MiniRedis
 
 app = FastAPI(title="Mini Redis", version="0.1.0")
 store = MiniRedis()
+benchmark_jobs: dict[str, dict] = {}
+benchmark_jobs_lock = threading.Lock()
 
 
 class SetRequest(BaseModel):
@@ -48,6 +52,14 @@ class KeyInfo(BaseModel):
 
     key: str
     ttl: int | None
+
+
+class BenchmarkStartResponse(BaseModel):
+    """개별 벤치마크 작업 시작 응답 형식."""
+
+    job_id: str
+    scenario: str
+    status: str
 
 
 @app.post("/set", response_model=SetResponse)
@@ -223,6 +235,86 @@ def run_benchmark():
         return execute_benchmark()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to run benchmark: {exc}") from exc
+
+
+@app.post("/run-benchmark/{scenario_name}", response_model=BenchmarkStartResponse)
+def run_benchmark_scenario(scenario_name: str):
+    """
+    벤치마크 시나리오 하나를 백그라운드로 시작하는 API.
+
+    왜 필요한가? 대시보드에서 시나리오별 버튼을 누르고,
+    끝날 때까지 진행 상황을 중간중간 보여주려면
+    요청을 바로 끝내고 뒤에서 작업을 이어가야 하기 때문이다.
+    """
+    from benchmark import (
+        SCENARIO_1_NAME,
+        SCENARIO_2_NAME,
+        SCENARIO_3_NAME,
+        run_named_scenario,
+    )
+
+    allowed_scenarios = {SCENARIO_1_NAME, SCENARIO_2_NAME, SCENARIO_3_NAME}
+    if scenario_name not in allowed_scenarios:
+        raise HTTPException(status_code=400, detail="Unknown benchmark scenario")
+
+    job_id = uuid.uuid4().hex
+    with benchmark_jobs_lock:
+        benchmark_jobs[job_id] = {
+            "job_id": job_id,
+            "scenario": scenario_name,
+            "status": "running",
+            "phase": "starting",
+            "elapsed_ms": 0,
+            "current_loaded": 0,
+            "total_ops": 0,
+            "result": None,
+            "error": None,
+        }
+
+    def update_progress(progress: dict) -> None:
+        # 백그라운드 작업이 보낸 진행 상황을 현재 작업 표에 덮어쓴다.
+        with benchmark_jobs_lock:
+            if job_id in benchmark_jobs:
+                benchmark_jobs[job_id].update(progress)
+
+    def worker() -> None:
+        try:
+            result = run_named_scenario(scenario_name, progress_callback=update_progress)
+            with benchmark_jobs_lock:
+                benchmark_jobs[job_id].update(
+                    {
+                        "status": "completed",
+                        "phase": "completed",
+                        "result": result,
+                    }
+                )
+        except Exception as exc:
+            with benchmark_jobs_lock:
+                benchmark_jobs[job_id].update(
+                    {
+                        "status": "failed",
+                        "phase": "failed",
+                        "error": str(exc),
+                    }
+                )
+
+    threading.Thread(target=worker, daemon=True).start()
+    return BenchmarkStartResponse(job_id=job_id, scenario=scenario_name, status="running")
+
+
+@app.get("/benchmark-status/{job_id}")
+def get_benchmark_status(job_id: str):
+    """
+    벤치마크 작업의 현재 상태를 조회하는 API.
+
+    비유: 오븐에 넣어 둔 빵이 "지금 몇 분 지났는지, 거의 끝났는지"를
+    밖에서 보는 창문 같은 역할이다.
+    """
+    with benchmark_jobs_lock:
+        job = benchmark_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Benchmark job not found")
+        return job
 
 
 @app.get("/dashboard", response_class=HTMLResponse)

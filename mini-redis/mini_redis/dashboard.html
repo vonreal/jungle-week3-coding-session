@@ -268,6 +268,13 @@
       margin-top: 16px;
     }
 
+    .bench-controls {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+
     .bench-row {
       display: grid;
       grid-template-columns: 104px 1fr 88px;
@@ -298,6 +305,30 @@
     .status-line {
       color: var(--muted);
       font-size: 0.87rem;
+    }
+
+    .progress-card {
+      margin-top: 14px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: rgba(255, 250, 242, 0.92);
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 12px;
+      margin-top: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(92, 76, 53, 0.12);
+    }
+
+    .progress-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #e79658, #bd5d38);
+      transition: width 180ms ease;
     }
 
     @keyframes grow {
@@ -403,8 +434,21 @@
             <button id="testsButton" type="button">Run Tests</button>
             <button id="benchmarkButton" type="button" class="secondary">Run Benchmark</button>
           </div>
+          <div class="bench-controls">
+            <button id="scenario1Button" type="button">Scenario 1</button>
+            <button id="scenario2Button" type="button" class="secondary">Scenario 2</button>
+            <button id="scenario3Button" type="button" class="secondary">Scenario 3</button>
+            <button id="clearBenchmarkButton" type="button" class="secondary">Clear</button>
+          </div>
           <div id="labResult" class="result-box">버튼을 눌러 테스트 또는 벤치마크를 실행하세요.</div>
           <pre id="testsOutput" style="margin-top: 14px;">아직 실행된 테스트가 없습니다.</pre>
+          <div id="benchmarkProgress" class="progress-card">
+            <strong>Benchmark Progress</strong>
+            <div id="benchmarkProgressText" class="status-line">아직 실행 중인 시나리오가 없습니다.</div>
+            <div class="progress-bar">
+              <div id="benchmarkProgressFill" class="progress-fill" style="width: 0%;"></div>
+            </div>
+          </div>
           <div id="benchmarkChart" class="bench-chart"></div>
         </div>
       </article>
@@ -421,6 +465,8 @@
     const keysStatus = document.getElementById("keysStatus");
     const keysTableBody = document.getElementById("keysTableBody");
     const benchmarkChart = document.getElementById("benchmarkChart");
+    const benchmarkProgressText = document.getElementById("benchmarkProgressText");
+    const benchmarkProgressFill = document.getElementById("benchmarkProgressFill");
 
     const totalKeys = document.getElementById("totalKeys");
     const keysWithTtl = document.getElementById("keysWithTtl");
@@ -432,8 +478,13 @@
     const flushButton = document.getElementById("flushButton");
     const testsButton = document.getElementById("testsButton");
     const benchmarkButton = document.getElementById("benchmarkButton");
+    const scenario1Button = document.getElementById("scenario1Button");
+    const scenario2Button = document.getElementById("scenario2Button");
+    const scenario3Button = document.getElementById("scenario3Button");
+    const clearBenchmarkButton = document.getElementById("clearBenchmarkButton");
 
     let keyRows = [];
+    let benchmarkPollTimer = null;
 
     // 서버 응답을 읽기 쉬운 메시지 상자로 보여준다.
     function showBox(target, message, type = "good") {
@@ -598,6 +649,81 @@
       }).join("");
     }
 
+    // 개별 시나리오 실행 중인 상태를 실시간처럼 보여준다.
+    function renderBenchmarkProgress(status) {
+      const current = Number(status.current_loaded ?? 0);
+      const total = Number(status.total_ops ?? 0);
+      const ratio = total === 0 ? 0 : Math.min(100, (current / total) * 100);
+      benchmarkProgressFill.style.width = `${ratio}%`;
+
+      if (status.status === "completed") {
+        benchmarkProgressText.textContent = `${scenarioLabel(status.scenario)} 완료 · ${Number(status.elapsed_ms ?? 0).toFixed(1)} ms · ${current}/${total}`;
+        return;
+      }
+
+      if (status.status === "failed") {
+        benchmarkProgressText.textContent = `${scenarioLabel(status.scenario)} 실패 · ${status.error || "알 수 없는 오류"}`;
+        return;
+      }
+
+      benchmarkProgressText.textContent = `${scenarioLabel(status.scenario)} 진행 중 · ${status.phase} · ${Number(status.elapsed_ms ?? 0).toFixed(1)} ms · ${current}/${total}`;
+    }
+
+    // 개별 시나리오를 백그라운드 작업으로 시작하고, 상태 API를 주기적으로 읽는다.
+    async function startScenarioBenchmark(scenarioName) {
+      if (benchmarkPollTimer) {
+        clearInterval(benchmarkPollTimer);
+        benchmarkPollTimer = null;
+      }
+
+      scenario1Button.disabled = true;
+      scenario2Button.disabled = true;
+      scenario3Button.disabled = true;
+      benchmarkProgressFill.style.width = "0%";
+      benchmarkProgressText.textContent = "작업 생성 중...";
+      showBox(labResult, `${scenarioLabel(scenarioName)} 실행을 시작합니다...`, "good");
+
+      try {
+        const started = await requestJson(`/run-benchmark/${scenarioName}`, { method: "POST" });
+
+        benchmarkPollTimer = setInterval(async () => {
+          try {
+            const status = await requestJson(`/benchmark-status/${started.job_id}`);
+            renderBenchmarkProgress(status);
+
+            if (status.status === "completed") {
+              clearInterval(benchmarkPollTimer);
+              benchmarkPollTimer = null;
+              renderBenchmark({ [scenarioName]: status.result });
+              showBox(labResult, `${scenarioLabel(scenarioName)} 완료`, "good");
+              scenario1Button.disabled = false;
+              scenario2Button.disabled = false;
+              scenario3Button.disabled = false;
+            } else if (status.status === "failed") {
+              clearInterval(benchmarkPollTimer);
+              benchmarkPollTimer = null;
+              showBox(labResult, status.error || "벤치마크 실행 실패", "bad");
+              scenario1Button.disabled = false;
+              scenario2Button.disabled = false;
+              scenario3Button.disabled = false;
+            }
+          } catch (error) {
+            clearInterval(benchmarkPollTimer);
+            benchmarkPollTimer = null;
+            showBox(labResult, error.message, "bad");
+            scenario1Button.disabled = false;
+            scenario2Button.disabled = false;
+            scenario3Button.disabled = false;
+          }
+        }, 300);
+      } catch (error) {
+        showBox(labResult, error.message, "bad");
+        scenario1Button.disabled = false;
+        scenario2Button.disabled = false;
+        scenario3Button.disabled = false;
+      }
+    }
+
     // SET 버튼은 key/value/ttl을 서버에 보내 저장한다.
     async function handleSet() {
       const payload = readCommandInput();
@@ -685,6 +811,21 @@
       }
     }
 
+    // 진행 표시와 차트를 한 번에 비운다.
+    function clearBenchmarkView() {
+      if (benchmarkPollTimer) {
+        clearInterval(benchmarkPollTimer);
+        benchmarkPollTimer = null;
+      }
+      benchmarkChart.innerHTML = "";
+      benchmarkProgressFill.style.width = "0%";
+      benchmarkProgressText.textContent = "아직 실행 중인 시나리오가 없습니다.";
+      scenario1Button.disabled = false;
+      scenario2Button.disabled = false;
+      scenario3Button.disabled = false;
+      showBox(labResult, "벤치마크 표시를 초기화했습니다.", "good");
+    }
+
     // 페이지가 뜨자마자 기본 정보와 키 목록을 가져온다.
     async function bootstrapDashboard() {
       try {
@@ -702,6 +843,10 @@
     flushButton.addEventListener("click", () => handleFlush().catch((error) => showBox(commandResult, error.message, "bad")));
     testsButton.addEventListener("click", handleRunTests);
     benchmarkButton.addEventListener("click", handleRunBenchmark);
+    scenario1Button.addEventListener("click", () => startScenarioBenchmark("scenario_1_repeated_reads"));
+    scenario2Button.addEventListener("click", () => startScenarioBenchmark("scenario_2_unique_reads"));
+    scenario3Button.addEventListener("click", () => startScenarioBenchmark("scenario_3_short_ttl"));
+    clearBenchmarkButton.addEventListener("click", clearBenchmarkView);
 
     bootstrapDashboard();
 
