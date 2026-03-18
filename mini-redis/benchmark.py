@@ -216,8 +216,8 @@ def run_scenario_3(store: MiniRedis, iterations: int = 100) -> dict:
     # 비교를 공정하게 하려고 DB 쪽도 같은 요청 간격으로 측정한다.
     db_only_start = time.perf_counter()
     for _ in range(iterations):
-        query_from_db(product_id)
         time.sleep(0.05)
+        query_from_db(product_id)
     db_only_total_ms = (time.perf_counter() - db_only_start) * 1000
 
     cache_hits = 0
@@ -226,6 +226,8 @@ def run_scenario_3(store: MiniRedis, iterations: int = 100) -> dict:
     # TTL=1초로 두면 반복 조회 중간에 캐시가 여러 번 만료된다.
     with_cache_start = time.perf_counter()
     for _ in range(iterations):
+        # 요청 자체가 띄엄띄엄 들어오는 상황을 흉내 낸다.
+        time.sleep(0.05)
         cached_value = store.get(cache_key)
         if cached_value is None:
             cache_misses += 1
@@ -233,7 +235,6 @@ def run_scenario_3(store: MiniRedis, iterations: int = 100) -> dict:
             store.set(cache_key, cached_value, ttl=1)
         else:
             cache_hits += 1
-        time.sleep(0.05)
     with_cache_total_ms = (time.perf_counter() - with_cache_start) * 1000
 
     safe_with_cache_total_ms = max(with_cache_total_ms, 0.001)
