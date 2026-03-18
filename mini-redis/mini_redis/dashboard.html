@@ -1,1 +1,695 @@
-<!-- Phase 3.5에서 구현 예정 -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mini Redis Dashboard</title>
+  <style>
+    :root {
+      --bg: #f5f1e8;
+      --panel: rgba(255, 252, 246, 0.86);
+      --panel-strong: #fffaf0;
+      --line: rgba(67, 48, 24, 0.14);
+      --text: #2d2417;
+      --muted: #7b6a52;
+      --accent: #bd5d38;
+      --accent-strong: #9b4120;
+      --good: #2d7d5f;
+      --bad: #ab3f33;
+      --shadow: 0 24px 60px rgba(79, 52, 24, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(255, 223, 186, 0.9), transparent 36%),
+        radial-gradient(circle at bottom right, rgba(208, 224, 255, 0.68), transparent 30%),
+        linear-gradient(145deg, #f8f2e7 0%, #efe4d0 100%);
+    }
+
+    .shell {
+      width: min(1440px, calc(100% - 48px));
+      margin: 28px auto;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: rgba(255, 250, 240, 0.72);
+      backdrop-filter: blur(14px);
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 24px;
+      margin-bottom: 22px;
+    }
+
+    .hero h1 {
+      margin: 0;
+      font-family: "IBM Plex Serif", Georgia, serif;
+      font-size: 2.6rem;
+      font-weight: 600;
+      letter-spacing: -0.04em;
+    }
+
+    .hero p {
+      margin: 8px 0 0;
+      max-width: 760px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .info-strip {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      min-width: 340px;
+    }
+
+    .info-card,
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: var(--panel);
+      box-shadow: 0 10px 30px rgba(48, 35, 20, 0.06);
+    }
+
+    .info-card {
+      padding: 16px 18px;
+    }
+
+    .info-card span {
+      display: block;
+      font-size: 0.83rem;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+
+    .info-card strong {
+      font-size: 1.6rem;
+      font-weight: 700;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1.05fr 1.4fr 1.1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      overflow: hidden;
+    }
+
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.35), transparent);
+    }
+
+    .panel-header h2 {
+      margin: 0;
+      font-size: 1.05rem;
+    }
+
+    .panel-header span {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .panel-body {
+      padding: 18px 20px 20px;
+    }
+
+    .form-grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    label {
+      display: grid;
+      gap: 8px;
+      font-size: 0.9rem;
+      color: var(--muted);
+    }
+
+    input,
+    textarea,
+    button {
+      font: inherit;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      padding: 12px 13px;
+      border: 1px solid rgba(76, 57, 33, 0.18);
+      border-radius: 14px;
+      background: var(--panel-strong);
+      color: var(--text);
+      outline: none;
+      transition: border-color 180ms ease, transform 180ms ease;
+    }
+
+    input:focus,
+    textarea:focus {
+      border-color: rgba(189, 93, 56, 0.65);
+      transform: translateY(-1px);
+    }
+
+    textarea {
+      min-height: 120px;
+      resize: vertical;
+      line-height: 1.55;
+    }
+
+    .button-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    button {
+      border: none;
+      border-radius: 14px;
+      padding: 12px 14px;
+      cursor: pointer;
+      color: #fff9f2;
+      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+      box-shadow: 0 10px 24px rgba(189, 93, 56, 0.28);
+      transition: transform 180ms ease, box-shadow 180ms ease, opacity 180ms ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 14px 26px rgba(189, 93, 56, 0.22);
+    }
+
+    button:disabled {
+      cursor: progress;
+      opacity: 0.7;
+    }
+
+    button.secondary {
+      background: linear-gradient(135deg, #5f6f8f, #3f506b);
+      box-shadow: 0 10px 24px rgba(63, 80, 107, 0.18);
+    }
+
+    .result-box,
+    pre {
+      margin: 0;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid var(--line);
+      background: rgba(255, 250, 242, 0.9);
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.55;
+    }
+
+    .result-box.good {
+      border-color: rgba(45, 125, 95, 0.28);
+      background: rgba(233, 250, 243, 0.92);
+    }
+
+    .result-box.bad {
+      border-color: rgba(171, 63, 51, 0.28);
+      background: rgba(255, 240, 237, 0.95);
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: 620px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.94rem;
+    }
+
+    th,
+    td {
+      padding: 12px 10px;
+      border-bottom: 1px solid rgba(74, 58, 36, 0.08);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      position: sticky;
+      top: 0;
+      background: rgba(255, 247, 237, 0.96);
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .empty-state {
+      padding: 28px 14px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .bench-chart {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .bench-row {
+      display: grid;
+      grid-template-columns: 104px 1fr 88px;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .bench-bar {
+      position: relative;
+      height: 16px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(92, 76, 53, 0.12);
+    }
+
+    .bench-fill {
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #e79658, #bd5d38);
+      transform-origin: left center;
+      animation: grow 450ms ease;
+    }
+
+    .bench-fill.cool {
+      background: linear-gradient(90deg, #5d88c8, #355d98);
+    }
+
+    .status-line {
+      color: var(--muted);
+      font-size: 0.87rem;
+    }
+
+    @keyframes grow {
+      from {
+        transform: scaleX(0.1);
+      }
+      to {
+        transform: scaleX(1);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div>
+        <h1>Mini Redis Dashboard</h1>
+        <p>
+          API를 누르며 데이터를 넣고, TTL이 줄어드는 모습을 보고,
+          테스트와 벤치마크까지 한 화면에서 확인하는 실험실입니다.
+        </p>
+      </div>
+      <div class="info-strip">
+        <article class="info-card">
+          <span>Total Keys</span>
+          <strong id="totalKeys">0</strong>
+        </article>
+        <article class="info-card">
+          <span>Keys With TTL</span>
+          <strong id="keysWithTtl">0</strong>
+        </article>
+        <article class="info-card">
+          <span>Keys Without TTL</span>
+          <strong id="keysWithoutTtl">0</strong>
+        </article>
+      </div>
+    </section>
+
+    <section class="layout">
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Command Panel</h2>
+          <span>SET / GET / DEL / FLUSH</span>
+        </div>
+        <div class="panel-body">
+          <div class="form-grid">
+            <label>
+              Key
+              <input id="keyInput" type="text" placeholder="예: name">
+            </label>
+            <label>
+              Value
+              <textarea id="valueInput" placeholder="예: alice"></textarea>
+            </label>
+            <label>
+              TTL (seconds, optional)
+              <input id="ttlInput" type="number" min="0" step="1" placeholder="예: 60">
+            </label>
+            <div class="button-row">
+              <button id="setButton" type="button">SET</button>
+              <button id="getButton" type="button" class="secondary">GET</button>
+              <button id="deleteButton" type="button" class="secondary">DEL</button>
+              <button id="flushButton" type="button">FLUSH</button>
+            </div>
+            <div id="commandResult" class="result-box">명령 실행 결과가 여기 표시됩니다.</div>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Key Inventory</h2>
+          <span>3초마다 새로고침</span>
+        </div>
+        <div class="panel-body">
+          <div class="status-line" id="keysStatus">서버에서 키 목록을 불러오는 중...</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Key</th>
+                  <th>Value</th>
+                  <th>TTL</th>
+                </tr>
+              </thead>
+              <tbody id="keysTableBody">
+                <tr>
+                  <td colspan="3" class="empty-state">아직 저장된 키가 없습니다.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Tests & Benchmark</h2>
+          <span>기능 검증 + 성능 비교</span>
+        </div>
+        <div class="panel-body">
+          <div class="button-row" style="grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 14px;">
+            <button id="testsButton" type="button">Run Tests</button>
+            <button id="benchmarkButton" type="button" class="secondary">Run Benchmark</button>
+          </div>
+          <div id="labResult" class="result-box">버튼을 눌러 테스트 또는 벤치마크를 실행하세요.</div>
+          <pre id="testsOutput" style="margin-top: 14px;">아직 실행된 테스트가 없습니다.</pre>
+          <div id="benchmarkChart" class="bench-chart"></div>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <script>
+    const keyInput = document.getElementById("keyInput");
+    const valueInput = document.getElementById("valueInput");
+    const ttlInput = document.getElementById("ttlInput");
+    const commandResult = document.getElementById("commandResult");
+    const labResult = document.getElementById("labResult");
+    const testsOutput = document.getElementById("testsOutput");
+    const keysStatus = document.getElementById("keysStatus");
+    const keysTableBody = document.getElementById("keysTableBody");
+    const benchmarkChart = document.getElementById("benchmarkChart");
+
+    const totalKeys = document.getElementById("totalKeys");
+    const keysWithTtl = document.getElementById("keysWithTtl");
+    const keysWithoutTtl = document.getElementById("keysWithoutTtl");
+
+    const setButton = document.getElementById("setButton");
+    const getButton = document.getElementById("getButton");
+    const deleteButton = document.getElementById("deleteButton");
+    const flushButton = document.getElementById("flushButton");
+    const testsButton = document.getElementById("testsButton");
+    const benchmarkButton = document.getElementById("benchmarkButton");
+
+    let keyRows = [];
+
+    // 서버 응답을 읽기 쉬운 메시지 상자로 보여준다.
+    function showBox(target, message, type = "good") {
+      target.textContent = message;
+      target.className = `result-box ${type}`;
+    }
+
+    // 공통 fetch 함수다. 에러 메시지를 한 곳에서 정리하려고 따로 뺐다.
+    async function requestJson(url, options = {}) {
+      const response = await fetch(url, options);
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const detail = data.detail || `Request failed with status ${response.status}`;
+        throw new Error(detail);
+      }
+
+      return data;
+    }
+
+    // 빈 문자열은 undefined로 바꿔서 TTL 없는 요청을 쉽게 만든다.
+    function readTtlValue() {
+      const raw = ttlInput.value.trim();
+      return raw === "" ? undefined : Number(raw);
+    }
+
+    // 키 값을 읽어 공통 payload를 만든다. 여러 버튼이 같은 입력 칸을 쓰기 때문이다.
+    function readCommandInput() {
+      return {
+        key: keyInput.value,
+        value: valueInput.value,
+        ttl: readTtlValue(),
+      };
+    }
+
+    // 대시보드 상단 숫자를 최신 info 값으로 바꾼다.
+    async function refreshInfo() {
+      const info = await requestJson("/info");
+      totalKeys.textContent = String(info.total_keys ?? 0);
+      keysWithTtl.textContent = String(info.keys_with_ttl ?? 0);
+      keysWithoutTtl.textContent = String(info.keys_without_ttl ?? 0);
+    }
+
+    // /keys 결과만으로는 value가 없어서, 각 키를 한 번 더 읽어 표를 채운다.
+    async function refreshKeys() {
+      const rows = await requestJson("/keys");
+      const fetchedAt = Date.now();
+
+      // 키마다 현재 value를 읽어 표에 같이 넣는다.
+      keyRows = await Promise.all(
+        rows.map(async (row) => {
+          try {
+            const item = await requestJson(`/get/${encodeURIComponent(row.key)}`);
+            return {
+              key: row.key,
+              value: item.value,
+              ttl: row.ttl,
+              fetchedAt,
+            };
+          } catch (error) {
+            return {
+              key: row.key,
+              value: "(expired)",
+              ttl: row.ttl,
+              fetchedAt,
+            };
+          }
+        })
+      );
+
+      keysStatus.textContent = `마지막 갱신: ${new Date().toLocaleTimeString()}`;
+      renderKeyTable();
+    }
+
+    // 받아온 keyRows를 표 HTML로 바꾼다.
+    function renderKeyTable() {
+      if (keyRows.length === 0) {
+        keysTableBody.innerHTML = `
+          <tr>
+            <td colspan="3" class="empty-state">아직 저장된 키가 없습니다.</td>
+          </tr>
+        `;
+        return;
+      }
+
+      const rowsHtml = keyRows.map((row) => {
+        let ttlText = "No TTL";
+
+        // 서버에서 받은 TTL 값을 바탕으로 화면에서는 1초씩 줄어드는 것처럼 보이게 한다.
+        if (row.ttl !== null) {
+          const elapsedSeconds = Math.floor((Date.now() - row.fetchedAt) / 1000);
+          ttlText = `${Math.max(0, row.ttl - elapsedSeconds)}s`;
+        }
+
+        return `
+          <tr>
+            <td>${escapeHtml(row.key)}</td>
+            <td>${escapeHtml(row.value)}</td>
+            <td>${ttlText}</td>
+          </tr>
+        `;
+      }).join("");
+
+      keysTableBody.innerHTML = rowsHtml;
+    }
+
+    // 사용자 입력과 서버 값을 DOM에 넣기 전에 최소한의 HTML 이스케이프를 한다.
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    // Run Benchmark 결과를 막대 그래프로 간단히 보여준다.
+    function renderBenchmark(result) {
+      const withoutCache = result.without_cache?.total_ms ?? 0;
+      const withCache = result.with_cache?.total_ms ?? 0;
+      const maxValue = Math.max(withoutCache, withCache, 1);
+
+      benchmarkChart.innerHTML = `
+        <div class="bench-row">
+          <strong>No Cache</strong>
+          <div class="bench-bar">
+            <div class="bench-fill" style="width: ${(withoutCache / maxValue) * 100}%"></div>
+          </div>
+          <span>${withoutCache.toFixed(1)} ms</span>
+        </div>
+        <div class="bench-row">
+          <strong>With Cache</strong>
+          <div class="bench-bar">
+            <div class="bench-fill cool" style="width: ${(withCache / maxValue) * 100}%"></div>
+          </div>
+          <span>${withCache.toFixed(1)} ms</span>
+        </div>
+      `;
+    }
+
+    // SET 버튼은 key/value/ttl을 서버에 보내 저장한다.
+    async function handleSet() {
+      const payload = readCommandInput();
+      const body = {
+        key: payload.key,
+        value: payload.value,
+      };
+
+      // TTL 입력칸이 비어 있지 않을 때만 body에 넣는다.
+      if (payload.ttl !== undefined) {
+        body.ttl = payload.ttl;
+      }
+
+      const result = await requestJson("/set", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      showBox(commandResult, `저장 완료: ${result.key}`, "good");
+      await Promise.all([refreshInfo(), refreshKeys()]);
+    }
+
+    // GET 버튼은 선택한 key의 현재 value를 결과 상자에 보여준다.
+    async function handleGet() {
+      const { key } = readCommandInput();
+      const result = await requestJson(`/get/${encodeURIComponent(key)}`);
+      valueInput.value = result.value;
+      showBox(commandResult, `조회 성공: ${result.key} = ${result.value}`, "good");
+    }
+
+    // DEL 버튼은 key 하나를 삭제하고 결과를 알려준다.
+    async function handleDelete() {
+      const { key } = readCommandInput();
+      const result = await requestJson(`/del/${encodeURIComponent(key)}`, {
+        method: "DELETE",
+      });
+
+      const message = result.deleted
+        ? `삭제 완료: ${result.key}`
+        : `삭제할 키가 없었습니다: ${result.key}`;
+      showBox(commandResult, message, result.deleted ? "good" : "bad");
+      await Promise.all([refreshInfo(), refreshKeys()]);
+    }
+
+    // FLUSH 버튼은 저장소 전체를 비우고 입력 칸도 정리한다.
+    async function handleFlush() {
+      await requestJson("/flush", { method: "POST" });
+      valueInput.value = "";
+      showBox(commandResult, "전체 데이터가 비워졌습니다.", "good");
+      await Promise.all([refreshInfo(), refreshKeys()]);
+    }
+
+    // 테스트 실행 버튼은 서버 뒤에서 pytest를 돌리고 결과를 텍스트로 보여준다.
+    async function handleRunTests() {
+      testsButton.disabled = true;
+      showBox(labResult, "테스트를 실행 중입니다...", "good");
+
+      try {
+        const result = await requestJson("/run-tests", { method: "POST" });
+        const statusText = result.passed ? "테스트 통과" : "테스트 실패";
+        showBox(labResult, statusText, result.passed ? "good" : "bad");
+        testsOutput.textContent = [result.output, result.errors].filter(Boolean).join("\n").trim() || "(출력 없음)";
+      } catch (error) {
+        showBox(labResult, error.message, "bad");
+        testsOutput.textContent = error.message;
+      } finally {
+        testsButton.disabled = false;
+      }
+    }
+
+    // 벤치마크 버튼은 캐시 유무 시간을 비교해 차트와 요약을 함께 갱신한다.
+    async function handleRunBenchmark() {
+      benchmarkButton.disabled = true;
+      showBox(labResult, "벤치마크를 실행 중입니다...", "good");
+
+      try {
+        const result = await requestJson("/run-benchmark", { method: "POST" });
+        renderBenchmark(result);
+        showBox(labResult, `속도 향상: 약 ${result.speedup.toFixed(2)}배`, "good");
+      } catch (error) {
+        showBox(labResult, error.message, "bad");
+      } finally {
+        benchmarkButton.disabled = false;
+      }
+    }
+
+    // 페이지가 뜨자마자 기본 정보와 키 목록을 가져온다.
+    async function bootstrapDashboard() {
+      try {
+        await Promise.all([refreshInfo(), refreshKeys()]);
+        showBox(commandResult, "서버와 연결되었습니다. 명령을 실행해 보세요.", "good");
+      } catch (error) {
+        showBox(commandResult, `초기 로딩 실패: ${error.message}`, "bad");
+        keysStatus.textContent = "키 목록을 불러오지 못했습니다.";
+      }
+    }
+
+    setButton.addEventListener("click", () => handleSet().catch((error) => showBox(commandResult, error.message, "bad")));
+    getButton.addEventListener("click", () => handleGet().catch((error) => showBox(commandResult, error.message, "bad")));
+    deleteButton.addEventListener("click", () => handleDelete().catch((error) => showBox(commandResult, error.message, "bad")));
+    flushButton.addEventListener("click", () => handleFlush().catch((error) => showBox(commandResult, error.message, "bad")));
+    testsButton.addEventListener("click", handleRunTests);
+    benchmarkButton.addEventListener("click", handleRunBenchmark);
+
+    bootstrapDashboard();
+
+    // 서버 새 폴링과 화면 TTL 카운트다운을 따로 돌려서 더 자연스럽게 보이게 한다.
+    setInterval(() => {
+      refreshInfo().catch(() => {});
+      refreshKeys().catch(() => {});
+    }, 3000);
+
+    setInterval(() => {
+      renderKeyTable();
+    }, 1000);
+  </script>
+</body>
+</html>
